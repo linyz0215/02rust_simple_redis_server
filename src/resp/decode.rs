@@ -127,7 +127,7 @@ fn calc_total_length(
     element_cnt: usize,
     prefix: &str,
 ) -> Result<usize, RespError> {
-    let mut start = end + CRLF_LEN;
+    let start = end + CRLF_LEN;
     let mut total = start;
     let mut data = &buf[start..];
     match prefix {
@@ -168,7 +168,7 @@ fn extract_simple_frame_data(buf: &[u8], prefix: &str) -> Result<usize, RespErro
     }
 
     //search for "\r\n"
-    let mut end = find_nth_crlf(buf, 1).ok_or(RespError::NotComplete)?;
+    let end = find_nth_crlf(buf, 1).ok_or(RespError::NotComplete)?;
 
     Ok(end)
 }
@@ -311,11 +311,20 @@ impl RespDecode for f64 {
 impl RespDecode for BulkString {
     const PREFIX: &'static str = "$";
     fn decode(buf: &mut BytesMut) -> Result<Self, RespError> {
-        todo!();
+        let (end, len) = parse_length(buf, Self::PREFIX)?;
+        let data = &buf[end + CRLF_LEN..];
+        if data.len() < len + CRLF_LEN {
+            return Err(RespError::NotComplete);
+        }
+
+        buf.advance(end + CRLF_LEN);//切除前面的length+crlf
+        let data = buf.split_to(len + CRLF_LEN);
+        Ok(BulkString::new(data[..len].to_vec()))
     }
 
     fn expect_length(buf: &[u8]) -> Result<usize,RespError> {
-        todo!();
+        let (end, len) = parse_length(buf, Self::PREFIX)?;
+        Ok(end + CRLF_LEN + len + CRLF_LEN)
     }
 }
 
@@ -404,34 +413,216 @@ impl RespDecode for RespMap {
 }
 
 
-#[cfg(test)]
 
+#[cfg(test)]
 mod tests {
+    use super::*;
+    use anyhow::Result;
     use bytes::BufMut;
 
-    use super::*;
-
     #[test]
-    fn test_simple_string_decode() {
+    fn test_simple_string_decode() -> Result<()> {
         let mut buf = BytesMut::new();
         buf.extend_from_slice(b"+OK\r\n");
-        let frame = SimpleString::decode(&mut buf).unwrap();
+
+        let frame = SimpleString::decode(&mut buf)?;
         assert_eq!(frame, SimpleString::new("OK".to_string()));
 
         buf.extend_from_slice(b"+hello\r");
-        let err = SimpleString::decode(&mut buf).unwrap_err();
-        assert_eq!(err, RespError::NotComplete);
+
+        let ret = SimpleString::decode(&mut buf);
+        assert_eq!(ret.unwrap_err(), RespError::NotComplete);
 
         buf.put_u8(b'\n');
-        let frame = SimpleString::decode(&mut buf).unwrap();
+        let frame = SimpleString::decode(&mut buf)?;
         assert_eq!(frame, SimpleString::new("hello".to_string()));
+
+        Ok(())
     }
 
     #[test]
-    fn test_simple_error_decode() {
+    fn test_simple_error_decode() -> Result<()> {
         let mut buf = BytesMut::new();
         buf.extend_from_slice(b"-Error message\r\n");
-        let frame = SimpleError::decode(&mut buf).unwrap();
+
+        let frame = SimpleError::decode(&mut buf)?;
         assert_eq!(frame, SimpleError::new("Error message".to_string()));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_integer_decode() -> Result<()> {
+        let mut buf = BytesMut::new();
+        buf.extend_from_slice(b":+123\r\n");
+
+        let frame = i64::decode(&mut buf)?;
+        assert_eq!(frame, 123);
+
+        buf.extend_from_slice(b":-123\r\n");
+
+        let frame = i64::decode(&mut buf)?;
+        assert_eq!(frame, -123);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_bulk_string_decode() -> Result<()> {
+        let mut buf = BytesMut::new();
+        buf.extend_from_slice(b"$5\r\nhello\r\n");
+
+        let frame = BulkString::decode(&mut buf)?;
+        assert_eq!(frame, BulkString::new(b"hello"));
+
+        buf.extend_from_slice(b"$5\r\nhello");
+        let ret = BulkString::decode(&mut buf);
+        assert_eq!(ret.unwrap_err(), RespError::NotComplete);
+
+        buf.extend_from_slice(b"\r\n");
+        let frame = BulkString::decode(&mut buf)?;
+        assert_eq!(frame, BulkString::new(b"hello"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_null_bulk_string_decode() -> Result<()> {
+        let mut buf = BytesMut::new();
+        buf.extend_from_slice(b"$-1\r\n");
+
+        let frame = RespNullBulkString::decode(&mut buf)?;
+        assert_eq!(frame, RespNullBulkString);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_null_array_decode() -> Result<()> {
+        let mut buf = BytesMut::new();
+        buf.extend_from_slice(b"*-1\r\n");
+
+        let frame = RespNullArray::decode(&mut buf)?;
+        assert_eq!(frame, RespNullArray);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_null_decode() -> Result<()> {
+        let mut buf = BytesMut::new();
+        buf.extend_from_slice(b"_\r\n");
+
+        let frame = RespNull::decode(&mut buf)?;
+        assert_eq!(frame, RespNull);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_boolean_decode() -> Result<()> {
+        let mut buf = BytesMut::new();
+        buf.extend_from_slice(b"#t\r\n");
+
+        let frame = bool::decode(&mut buf)?;
+        assert!(frame);
+
+        buf.extend_from_slice(b"#f\r\n");
+
+        let frame = bool::decode(&mut buf)?;
+        assert!(!frame);
+
+        buf.extend_from_slice(b"#f\r");
+        let ret = bool::decode(&mut buf);
+        assert_eq!(ret.unwrap_err(), RespError::NotComplete);
+
+        buf.put_u8(b'\n');
+        let frame = bool::decode(&mut buf)?;
+        assert!(!frame);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_array_decode() -> Result<()> {
+        let mut buf = BytesMut::new();
+        buf.extend_from_slice(b"*2\r\n$3\r\nset\r\n$5\r\nhello\r\n");
+
+        let frame = RespArray::decode(&mut buf)?;
+        assert_eq!(frame, RespArray::new([b"set".into(), b"hello".into()]));
+
+        buf.extend_from_slice(b"*2\r\n$3\r\nset\r\n");
+        let ret = RespArray::decode(&mut buf);
+        assert_eq!(ret.unwrap_err(), RespError::NotComplete);
+
+        buf.extend_from_slice(b"$5\r\nhello\r\n");
+        let frame = RespArray::decode(&mut buf)?;
+        assert_eq!(frame, RespArray::new([b"set".into(), b"hello".into()]));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_double_decode() -> Result<()> {
+        let mut buf = BytesMut::new();
+        buf.extend_from_slice(b",123.45\r\n");
+
+        let frame = f64::decode(&mut buf)?;
+        assert_eq!(frame, 123.45);
+
+        buf.extend_from_slice(b",+1.23456e-9\r\n");
+        let frame = f64::decode(&mut buf)?;
+        assert_eq!(frame, 1.23456e-9);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_map_decode() -> Result<()> {
+        let mut buf = BytesMut::new();
+        buf.extend_from_slice(b"%2\r\n+hello\r\n$5\r\nworld\r\n+foo\r\n$3\r\nbar\r\n");
+
+        let frame = RespMap::decode(&mut buf)?;
+        let mut map = RespMap::new();
+        map.insert(
+            "hello".to_string(),
+            BulkString::new(b"world".to_vec()).into(),
+        );
+        map.insert("foo".to_string(), BulkString::new(b"bar".to_vec()).into());
+        assert_eq!(frame, map);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_set_decode() -> Result<()> {
+        let mut buf = BytesMut::new();
+        buf.extend_from_slice(b"~2\r\n$3\r\nset\r\n$5\r\nhello\r\n");
+
+        let frame = RespSet::decode(&mut buf)?;
+        assert_eq!(
+            frame,
+            RespSet::new(vec![
+                BulkString::new(b"set".to_vec()).into(),
+                BulkString::new(b"hello".to_vec()).into()
+            ])
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_calc_array_length() -> Result<()> {
+        let buf = b"*2\r\n$3\r\nset\r\n$5\r\nhello\r\n";
+        let (end, len) = parse_length(buf, "*")?;
+        let total_len = calc_total_length(buf, end, len, "*")?;
+        assert_eq!(total_len, buf.len());
+
+        let buf = b"*2\r\n$3\r\nset\r\n";
+        let (end, len) = parse_length(buf, "*")?;
+        let ret = calc_total_length(buf, end, len, "*");
+        assert_eq!(ret.unwrap_err(), RespError::NotComplete);
+
+        Ok(())
     }
 }
