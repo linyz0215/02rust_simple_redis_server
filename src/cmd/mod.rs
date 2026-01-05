@@ -15,8 +15,8 @@ pub enum CommandError {
     #[error("Invalid command: {0}")]
     InvalidCommand(String),
     #[error("Invalid argument: {0}")]
-    InvalidArgument(String),
-    #[error("{0}")]
+    InvalidArgument(String),     
+    #[error("{0}")]              
     RespError(#[from] RespError),
     #[error("UTF-8 error: {0}")]
     Utf8Error(#[from] std::string::FromUtf8Error),
@@ -32,6 +32,7 @@ pub enum Command {
     HGet(HGet),
     HSet(HSet),
     HGetAll(HGetAll),
+    Unrecognized(Unrecognized),
 }
 
 #[derive(Debug)]
@@ -62,6 +63,21 @@ pub struct HSet {
 pub struct HGetAll {
     key: String,
 }
+#[derive(Debug)]
+pub struct Unrecognized;
+
+impl TryFrom<RespFrame> for Command {
+    type Error = CommandError;
+    fn try_from(v: RespFrame) -> Result<Self, Self::Error> {
+        match v {
+            RespFrame::Array(arr) => Command::try_from(arr),
+            _ => Err(CommandError::InvalidCommand(
+                "Command must be an array".to_string(),
+            )),
+        }
+    }
+}
+
 
 impl TryFrom<RespArray> for Command {
     type Error = CommandError;
@@ -73,10 +89,7 @@ impl TryFrom<RespArray> for Command {
                 b"hget" => Ok(HGet::try_from(v)?.into()),
                 b"hset" => Ok(HSet::try_from(v)?.into()),
                 b"hgetall" => Ok(HGetAll::try_from(v)?.into()),
-                _ => Err(CommandError::InvalidCommand(format!(
-                    "Invalid command: {}",
-                    String::from_utf8_lossy(cmd.as_ref())
-                ))),
+                _ => Ok(Unrecognized.into()),
             },
             _ => Err(CommandError::InvalidCommand(
                 "Command must have a BulkString as the first argument".to_string(),
@@ -85,6 +98,11 @@ impl TryFrom<RespArray> for Command {
     }
 }
 
+impl CommandExecutor for Unrecognized {
+    fn execute(self, _backend: &Backend) -> RespFrame {
+        RESP_OK.clone()
+    }
+}
 
 fn validate_command(
     value: &RespArray,
@@ -101,7 +119,7 @@ fn validate_command(
     for (i, name) in names.iter().enumerate() {
         match value[i] {
             RespFrame::BulkString(ref cmd_name) => {
-                if cmd_name.0.to_ascii_lowercase() != name.as_bytes() {
+                if cmd_name.to_ascii_lowercase() != name.as_bytes() {
                     return Err(CommandError::InvalidCommand(format!(
                         "Expected command name '{}'",
                         name

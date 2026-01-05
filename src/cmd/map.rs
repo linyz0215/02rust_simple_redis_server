@@ -1,7 +1,8 @@
-use std::process::Command;
-
 use crate::{
-    RespArray, RespFrame, RespNull, cmd::{Backend, CommandError, CommandExecutor, Get, RESP_OK, Set, extract_args, validate_command}
+    RespArray, RespFrame, RespNull,
+    cmd::{
+        Backend, CommandError, CommandExecutor, Get, RESP_OK, Set, extract_args, validate_command,
+    },
 };
 
 impl CommandExecutor for Get {
@@ -53,11 +54,10 @@ impl TryFrom<RespArray> for Set {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{RespDecode};
+    use crate::RespDecode;
     use anyhow::Result;
     use bytes::BytesMut;
 
@@ -87,7 +87,7 @@ mod tests {
 
         Ok(())
     }
-        #[test]
+    #[test]
     fn test_set_get_command() -> Result<()> {
         let backend = Backend::new();
         let cmd = Set {
@@ -105,7 +105,4 @@ mod tests {
 
         Ok(())
     }
-
-
-    
 }

@@ -1,4 +1,9 @@
-use crate::{RespArray, RespFrame, RespMap, cmd::{CommandError, CommandExecutor, HGet, HGetAll, HSet, RESP_OK, extract_args, validate_command}};
+use crate::{
+    RespArray, RespFrame, RespMap,
+    cmd::{
+        CommandError, CommandExecutor, HGet, HGetAll, HSet, RESP_OK, extract_args, validate_command,
+    },
+};
 
 impl CommandExecutor for HGet {
     fn execute(self, backend: &crate::Backend) -> RespFrame {
@@ -26,7 +31,6 @@ impl CommandExecutor for HGetAll {
         }
     }
 }
-
 
 impl CommandExecutor for HSet {
     fn execute(self, backend: &crate::Backend) -> RespFrame {
@@ -75,18 +79,19 @@ impl TryFrom<RespArray> for HSet {
         validate_command(&value, &["hset"], 3)?;
         let mut args = extract_args(value, 1)?.into_iter();
         match (args.next(), args.next(), args.next()) {
-            (Some(RespFrame::BulkString(key)), Some(RespFrame::BulkString(field)), Some(value)) => Ok(HSet {
-                key: String::from_utf8(key.0)?,
-                field: String::from_utf8(field.0)?,
-                value,
-            }),
+            (Some(RespFrame::BulkString(key)), Some(RespFrame::BulkString(field)), Some(value)) => {
+                Ok(HSet {
+                    key: String::from_utf8(key.0)?,
+                    field: String::from_utf8(field.0)?,
+                    value,
+                })
+            }
             _ => Err(CommandError::InvalidArgument(
                 "Invalid arguments".to_string(),
             )),
         }
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -137,4 +142,3 @@ mod tests {
         Ok(())
     }
 }
-

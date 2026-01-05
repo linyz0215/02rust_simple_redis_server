@@ -48,7 +48,6 @@ pub enum RespFrame {
     Array(RespArray),
     NullArray(RespNullArray),
     Null(RespNull),
-
     Boolean(bool),
     Double(f64),
     Map(RespMap),
