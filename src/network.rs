@@ -34,7 +34,7 @@ pub async fn stream_handler(stream: TcpStream, backend: Backend) -> Result<()> {
                 framed.send(response.frame).await?;
 
             }
-            Some(Err(e)) => return Err(e.into()),
+            Some(Err(e)) => return Err(e),
             None => return Ok(())
         }
     }
